@@ -33,6 +33,8 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import ninja.leaping.configurate.ConfigurationNode;
 import ninja.leaping.configurate.hocon.HoconConfigurationLoader;
 import ninja.leaping.configurate.loader.ConfigurationLoader;
@@ -107,7 +109,7 @@ import javax.annotation.Nullable;
  */
 public final class GenericArguments {
 
-    private static final CommandElement NONE = new SequenceCommandElement(ImmutableList.<CommandElement>of());
+    private static final CommandElement NONE = new SequenceCommandElement(ImmutableList.of());
 
     private GenericArguments() {}
 
@@ -120,8 +122,14 @@ public final class GenericArguments {
         return NONE;
     }
 
-    static CommandElement markTrue(String flag) {
-        return new MarkTrueCommandElement(flag);
+    /**
+     * Expects no arguments. Adds 'true' to the context when parsed.
+     *
+     * @param key the key to store 'true' under
+     * @return the argument
+     */
+    public static CommandElement markTrue(Text key) {
+        return new MarkTrueCommandElement(key);
     }
 
     /**
@@ -258,8 +266,8 @@ public final class GenericArguments {
 
     static class MarkTrueCommandElement extends CommandElement {
 
-        MarkTrueCommandElement(String flag) {
-            super(Text.of(flag));
+        MarkTrueCommandElement(Text key) {
+            super(key);
         }
 
         @Override
@@ -312,6 +320,7 @@ public final class GenericArguments {
             }
         }
 
+        @Nullable
         @Override
         protected Object parseValue(CommandSource source, CommandArgs args) throws ArgumentParseException {
             return null;
@@ -319,33 +328,27 @@ public final class GenericArguments {
 
         @Override
         public List<String> complete(CommandSource src, CommandArgs args, CommandContext context) {
-            for (Iterator<CommandElement> it = this.elements.iterator(); it.hasNext(); ) {
-                CommandElement element = it.next();
-                Object startState = args.getState();
+            Set<String> completions = Sets.newHashSet();
+            for (CommandElement element : elements) {
+                Object start = args.getState();
                 try {
                     element.parse(src, args, context);
-                    Object endState = args.getState();
-                    if (!args.hasNext()) {
-                        args.setState(startState);
-                        List<String> inputs = element.complete(src, args, context);
-                        args.previous();
-                        if (!inputs.contains(args.next())) { // Tabcomplete returns results to complete the last word in an argument.
-                            // If the last word is one of the completions, the command is most likely complete
-                            return inputs;
-                        }
-
-                        args.setState(endState);
+                    if (start.equals(args.getState())) {
+                        completions.addAll(element.complete(src, args, context));
+                    } else if (!completions.isEmpty()) {
+                        completions.clear();
                     }
-                } catch (ArgumentParseException e) {
-                    args.setState(startState);
+                    if (!args.hasNext()) {
+                        args.setState(start);
+                        completions.addAll(element.complete(src, args, context));
+                        break;
+                    }
+                } catch (ArgumentParseException ignored) {
+                    args.setState(start);
                     return element.complete(src, args, context);
                 }
-
-                if (!it.hasNext()) {
-                    args.setState(startState);
-                }
             }
-            return Collections.emptyList();
+            return Lists.newArrayList(completions);
         }
 
         @Override
@@ -631,31 +634,26 @@ public final class GenericArguments {
 
         @Override
         public void parse(CommandSource source, CommandArgs args, CommandContext context) throws ArgumentParseException {
-            if (!args.hasNext()) {
-                Text key = this.element.getKey();
-                if (key != null && this.value != null) {
-                    context.putArg(key.toPlain(), this.value);
-                }
-                return;
-            }
-            Object startState = args.getState();
-            try {
-                this.element.parse(source, args, context);
-            } catch (ArgumentParseException ex) {
-                if (this.considerInvalidFormatEmpty || args.hasNext()) { // If there are more args, suppress. Otherwise, throw the error
-                    args.setState(startState);
-                    if (this.element.getKey() != null && this.value != null) {
-                        context.putArg(this.element.getUntranslatedKey(), this.value);
+            if (args.hasNext()) {
+                Object start = args.getState();
+                try {
+                    this.element.parse(source, args, context);
+                } catch (ArgumentParseException ex) {
+                    if (!this.considerInvalidFormatEmpty && !args.hasNext()) {
+                        throw ex;
                     }
-                } else {
-                    throw ex;
+                    args.setState(start);
                 }
+            }
+            if (this.element.getKey() != null && this.value != null) {
+                context.putArg(this.element.getUntranslatedKey(), this.value);
             }
         }
 
+        @Nullable
         @Override
         protected Object parseValue(CommandSource source, CommandArgs args) throws ArgumentParseException {
-            return args.hasNext() ? null : this.element.parseValue(source, args);
+            return args.hasNext() ? this.element.parseValue(source, args) : this.value;
         }
 
         @Override
@@ -1124,6 +1122,7 @@ public final class GenericArguments {
 
         protected UserCommandElement(@Nullable Text key, boolean returnSource) {
             super(key);
+            this.possiblePlayer = new PlayerCommandElement(key, false);
             this.returnSource = returnSource;
         }
 
@@ -1183,7 +1182,7 @@ public final class GenericArguments {
 
         private final boolean returnSource;
 
-        protected PlayerCommandElement(Text key, boolean returnSource) {
+        protected PlayerCommandElement(@Nullable Text key, boolean returnSource) {
             super(key);
             this.returnSource = returnSource;
         }
