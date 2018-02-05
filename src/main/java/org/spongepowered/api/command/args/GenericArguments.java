@@ -320,7 +320,6 @@ public final class GenericArguments {
             }
         }
 
-        @Nullable
         @Override
         protected Object parseValue(CommandSource source, CommandArgs args) throws ArgumentParseException {
             return null;
@@ -634,26 +633,31 @@ public final class GenericArguments {
 
         @Override
         public void parse(CommandSource source, CommandArgs args, CommandContext context) throws ArgumentParseException {
-            if (args.hasNext()) {
-                Object start = args.getState();
-                try {
-                    this.element.parse(source, args, context);
-                } catch (ArgumentParseException ex) {
-                    if (!this.considerInvalidFormatEmpty && !args.hasNext()) {
-                        throw ex;
-                    }
-                    args.setState(start);
+            if (!args.hasNext()) {
+                Text key = this.element.getKey();
+                if (key != null && this.value != null) {
+                    context.putArg(key.toPlain(), this.value);
                 }
+                return;
             }
-            if (this.element.getKey() != null && this.value != null) {
-                context.putArg(this.element.getUntranslatedKey(), this.value);
+            Object startState = args.getState();
+            try {
+                this.element.parse(source, args, context);
+            } catch (ArgumentParseException ex) {
+                if (this.considerInvalidFormatEmpty || args.hasNext()) { // If there are more args, suppress. Otherwise, throw the error
+                    args.setState(startState);
+                    if (this.element.getKey() != null && this.value != null) {
+                        context.putArg(this.element.getUntranslatedKey(), this.value);
+                    }
+                } else {
+                    throw ex;
+                }
             }
         }
 
-        @Nullable
         @Override
         protected Object parseValue(CommandSource source, CommandArgs args) throws ArgumentParseException {
-            return args.hasNext() ? this.element.parseValue(source, args) : this.value;
+            return args.hasNext() ? null : this.element.parseValue(source, args);
         }
 
         @Override
@@ -1182,7 +1186,7 @@ public final class GenericArguments {
 
         private final boolean returnSource;
 
-        protected PlayerCommandElement(@Nullable Text key, boolean returnSource) {
+        protected PlayerCommandElement(Text key, boolean returnSource) {
             super(key);
             this.returnSource = returnSource;
         }
